@@ -28,8 +28,11 @@ func readBool(_ key: CFString) -> Bool? {
 }
 
 func currentSetting() -> MenuBarSetting {
+    // A long-running process caches preferences, so pull fresh values first. Otherwise a change made
+    // elsewhere (System Settings, a macOS update) looks like the old value and never gets put back.
+    CFPreferencesAppSynchronize(kCFPreferencesAnyApplication)
     // Missing keys mean the macOS default: shown on the desktop, hidden in full screen.
-    MenuBarSetting(hideOnDesktop: readBool(hideKey) ?? false, showInFullScreen: readBool(fullScreenKey) ?? false)
+    return MenuBarSetting(hideOnDesktop: readBool(hideKey) ?? false, showInFullScreen: readBool(fullScreenKey) ?? false)
 }
 
 func wantedSetting() -> MenuBarSetting? {
@@ -87,5 +90,13 @@ CGDisplayRegisterReconfigurationCallback({ _, flags, _ in
 NSWorkspace.shared.notificationCenter.addObserver(
     forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { _ in apply() }
 
+// Safety net. On 8-9 Nov the callbacks above never fired under launchd (the log stayed empty through a
+// monitor unplug, a wake and a replug) and the menu bar stayed shown on the monitors. Checking every few
+// seconds is a display list and two preference reads, so it costs next to nothing and can't be missed.
+let poll = Timer(timeInterval: 5, repeats: true) { _ in apply() }
+poll.tolerance = 2
+RunLoop.main.add(poll, forMode: .common)
+
+log("started, displays \(activeDisplays().map { CGDisplayIsBuiltin($0) != 0 ? "built-in" : "external" }), menu bar \(currentSetting())")
 apply()
 RunLoop.main.run()
